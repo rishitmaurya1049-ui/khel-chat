@@ -20,9 +20,10 @@ const COMMUNITIES = [
   { name: 'Running', emoji: '🏃', blurb: 'Morning runs, pace groups and race prep.' },
   { name: 'Weekend Hangouts', emoji: '☕', blurb: 'Cafes, treks and easy weekend plans.' },
 ].map((c) => ({ ...c, id: 'community-' + c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') }));
+const AVATARS = ['🏏', '⚽', '🏀', '🏸', '🏃', '🎾', '🚴', '🏆'];
 
 // ---------- shared chat state (one login and one connection for every screen) ----------
-const S = { phase: 'out', note: '', err: false, myId: null, name: '', convos: {}, msgs: {}, unread: {}, loaded: {}, active: null };
+const S = { phase: 'out', note: '', err: false, myId: null, name: '', photo: '', convos: {}, msgs: {}, unread: {}, loaded: {}, active: null };
 const subs = new Set();
 const notify = () => subs.forEach((f) => f());
 const say = (t, err = false) => { S.note = t; S.err = err; notify(); };
@@ -51,7 +52,10 @@ function connectWith(user) {
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.message || data.error || 'login failed');
-      S.myId = data.userId; S.name = data.name || 'You'; restore();
+      S.myId = data.userId;
+      S.name = localStorage.getItem('khel_profile_name_' + S.myId) || data.name || user.displayName || 'Player';
+      S.photo = localStorage.getItem('khel_profile_photo_' + S.myId) || user.photoURL || '';
+      restore();
       if (!engineReady) {
         NCEngine.initialize({ appKey: env.VITE_NEXCONN_APP_KEY });
         NCEngine.addMessageHandler('main', new MessageHandler({ onMessageReceived }));
@@ -122,7 +126,7 @@ async function createGroup(name) {
   const id = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const r = await GroupChannel.createGroup({ groupId: id, groupName: name, joinPermission: FREE });
   if (!r.isOk) return fail('Could not create group', r);
-  openConv(addConvo('g', id, name)); say('Group created. Use "Copy group id" and send it to friends.'); return true;
+  openConv(addConvo('g', id, name)); say('Squad group created. Share its group id with your squad.'); return true;
 }
 
 async function joinGroup(id) {
@@ -171,7 +175,7 @@ html.dark .nx{--panel:#0f172a;--soft:#1e293b;--line:#1e293b;--text:#f1f5f9;--mut
 .nx .nx-app{display:grid;grid-template-columns:280px 1fr;gap:1rem}
 @media(max-width:760px){.nx .nx-app{grid-template-columns:1fr}}
 .nx .nx-side,.nx .nx-main{display:flex;flex-direction:column;gap:.6rem}
-.nx .nx-me{display:flex;justify-content:space-between;align-items:center;gap:.5rem}
+.nx .nx-me{display:flex;justify-content:space-between;align-items:center;gap:.5rem}.nx .nx-profile{display:flex;align-items:center;gap:.65rem}.nx .nx-avatar{width:2.5rem;height:2.5rem;object-fit:cover;border-radius:50%;background:var(--soft);display:grid;place-items:center;font-size:1.4rem}.nx .nx-avatars{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.5rem}.nx .nx-avatar-choice{border:1px solid var(--line);background:var(--soft);border-radius:50%;width:2.2rem;height:2.2rem;cursor:pointer;font-size:1.2rem}.nx .nx-avatar-choice.on{outline:2px solid var(--acc)}
 .nx .nx-sub{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:.6rem 0 .2rem}
 .nx .nx-chat{display:block;width:100%;text-align:left;background:transparent;color:var(--text);border:1px solid transparent;border-radius:.6rem;padding:.4rem .5rem;font-weight:600;cursor:pointer;overflow-wrap:anywhere}
 .nx .nx-chat.on{border-color:var(--acc);background:var(--soft)}
@@ -198,11 +202,12 @@ const statusClass = () => 'nx-status' + (S.err ? ' err' : '');
 function unmount(host) { if (host && host.__nx) { subs.delete(host.__nx); host.__nx = null; host.innerHTML = ''; } }
 
 const CHATS_HTML = `<div class="nx">
-<div class="nx-card nx-gate" data-r="gate"><h2 class="nx-h">Live chats</h2>
-<p class="nx-muted">Sign in with Google to message players, join communities and start groups.</p>
+<div class="nx-card nx-gate" data-r="gate"><h2 class="nx-h">Chats</h2>
+<p class="nx-muted">Sign in with Google to message players and create squad groups.</p>
 <button class="nx-btn" data-r="login">Continue with Google</button><p class="nx-status" data-r="gstatus" role="status"></p></div>
 <div class="nx-app" data-r="app">
-<aside class="nx-card nx-side"><div class="nx-me"><strong data-r="name"></strong><button class="nx-btn ghost" data-r="copy">Copy my id</button></div>
+<aside class="nx-card nx-side"><div class="nx-me"><div class="nx-profile"><span class="nx-avatar" data-r="avatar">🙂</span><strong data-r="name"></strong></div><button class="nx-btn ghost" data-r="copy">Copy my id</button></div>
+<details class="nx-more"><summary>Edit profile</summary><label>Your name</label><div class="nx-row"><input class="nx-input" data-r="pname" maxlength="40" autocomplete="name"><button class="nx-btn" data-r="saveprofile">Save</button></div><label>Choose a photo</label><label class="nx-btn ghost" style="display:inline-block;cursor:pointer">Upload photo<input data-r="upload" type="file" accept="image/*" hidden></label><div class="nx-avatars" data-r="avatars"></div></details>
 <div data-r="list"></div>
 <details class="nx-more"><summary>Start something</summary>
 <label>Direct message (their user id)</label><div class="nx-row"><input class="nx-input" data-r="peer" autocomplete="off"><button class="nx-btn" data-r="open">Open</button></div>
@@ -217,8 +222,8 @@ const CHATS_HTML = `<div class="nx">
 
 function renderList(box) {
   box.innerHTML = '';
-  const keys = Object.keys(S.convos), isComm = (k) => S.convos[k].id.startsWith('community-');
-  const sections = [['Communities', (k) => isComm(k)], ['Groups', (k) => S.convos[k].type === 'g' && !isComm(k)], ['Direct messages', (k) => S.convos[k].type === 'd']];
+  const keys = Object.keys(S.convos).filter((k) => !S.convos[k].id.startsWith('community-'));
+  const sections = [['Squad groups', (k) => S.convos[k].type === 'g'], ['Direct messages', (k) => S.convos[k].type === 'd']];
   let any = false;
   sections.forEach(([label, f]) => {
     const ks = keys.filter(f); if (!ks.length) return; any = true;
@@ -229,12 +234,12 @@ function renderList(box) {
       b.onclick = () => openConv(k); box.appendChild(b);
     });
   });
-  if (!any) box.appendChild(el$('p', 'nx-muted', 'No chats yet. Join a community from the Clubs tab, or start one below.'));
+  if (!any) box.appendChild(el$('p', 'nx-muted', 'No chats yet. Create a squad group or start a direct message below.'));
 }
 
 function renderLog(log, c, list) {
   log.innerHTML = '';
-  if (!c) { log.appendChild(el$('p', 'nx-empty', 'Pick a chat on the left, or join a community.')); return; }
+  if (!c) { log.appendChild(el$('p', 'nx-empty', 'Pick a chat on the left, or create a squad group.')); return; }
   if (!list.length) { log.appendChild(el$('p', 'nx-empty', 'No messages yet. Say hi.')); return; }
   list.forEach((m) => {
     const d = el$('div', 'nx-msg' + (m.mine ? ' mine' : ''));
@@ -248,6 +253,35 @@ function mountChats(host) {
   const ui = {};
   host.querySelectorAll('[data-r]').forEach((n) => { ui[n.dataset.r] = n; });
   ui.login.onclick = () => signIn();
+  ui.saveprofile.onclick = () => {
+    const value = ui.pname.value.trim();
+    if (!value) return say('Enter your name first.', true);
+    S.name = value;
+    localStorage.setItem('khel_profile_name_' + S.myId, value);
+    say('Profile updated.');
+  };
+  ui.upload.onchange = () => {
+    const file = ui.upload.files?.[0];
+    if (!file) return;
+    if (file.size > 2000000) return say('Choose an image under 2 MB.', true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      S.photo = String(reader.result);
+      localStorage.setItem('khel_profile_photo_' + S.myId, S.photo);
+      update();
+    };
+    reader.readAsDataURL(file);
+  };
+  AVATARS.forEach((avatar) => {
+    const button = el$('button', 'nx-avatar-choice', avatar);
+    button.type = 'button'; button.title = `Use ${avatar}`;
+    button.onclick = () => {
+      S.photo = `emoji:${avatar}`;
+      localStorage.setItem('khel_profile_photo_' + S.myId, S.photo);
+      update();
+    };
+    ui.avatars.appendChild(button);
+  });
   ui.copy.onclick = async () => { try { await navigator.clipboard.writeText(S.myId); say('Your id is copied.'); } catch { say('Your id: ' + S.myId); } };
   ui.open.onclick = () => { const v = ui.peer.value.trim(); if (v) { openDirect(v); ui.peer.value = ''; } };
   ui.peer.onkeydown = (e) => { if (e.key === 'Enter') ui.open.click(); };
@@ -267,6 +301,22 @@ function mountChats(host) {
     if (!inn) return;
     ui.status.textContent = S.note; ui.status.className = statusClass();
     ui.name.textContent = S.name;
+    ui.pname.value = S.name;
+    if (S.photo.startsWith('emoji:')) {
+      if (ui.avatar.tagName === 'IMG') {
+        const avatar = el$('span', 'nx-avatar', S.photo.slice(6)); avatar.dataset.r = 'avatar';
+        ui.avatar.replaceWith(avatar); ui.avatar = avatar;
+      } else ui.avatar.replaceChildren(document.createTextNode(S.photo.slice(6)));
+    } else if (S.photo) {
+      const image = document.createElement('img'); image.src = S.photo; image.alt = 'Profile photo'; image.className = 'nx-avatar';
+      if (ui.avatar.tagName !== 'IMG') { ui.avatar.replaceWith(image); image.dataset.r = 'avatar'; ui.avatar = image; }
+      else ui.avatar.src = S.photo;
+    } else if (ui.avatar.tagName === 'IMG') {
+      const avatar = el$('span', 'nx-avatar', '🙂'); avatar.dataset.r = 'avatar';
+      ui.avatar.replaceWith(avatar); ui.avatar = avatar;
+    } else {
+      ui.avatar.replaceChildren(document.createTextNode('🙂'));
+    }
     renderList(ui.list);
     const c = S.convos[S.active], list = S.msgs[S.active] || [];
     ui.title.textContent = c ? (c.type === 'g' ? '# ' : 'Chat with ') + c.name : 'Pick a chat';
@@ -281,7 +331,7 @@ function mountChats(host) {
 
 function mountCommunities(host, openChats) {
   unmount(host);
-  host.innerHTML = `<div class="nx"><div class="nx-commhead"><div><h2 class="nx-h">Live community chats</h2>
+  host.innerHTML = `<div class="nx"><div class="nx-commhead"><div><h2 class="nx-h">Communities</h2>
 <p class="nx-muted">Real rooms where players talk right now. Pick a sport and join.</p></div><p data-r="s" role="status"></p></div><div class="nx-grid" data-r="grid"></div></div>`;
   const st = host.querySelector('[data-r="s"]'), grid = host.querySelector('[data-r="grid"]');
   const update = () => {
