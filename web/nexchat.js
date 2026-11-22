@@ -20,6 +20,7 @@ const COMMUNITIES = [
   { name: 'Running', emoji: '🏃', blurb: 'Morning runs, pace groups and race prep.' },
   { name: 'Weekend Hangouts', emoji: '☕', blurb: 'Cafes, treks and easy weekend plans.' },
 ].map((c) => ({ ...c, id: 'community-' + c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') }));
+const isCommunity = (c) => !!c && c.type === 'g' && c.id.startsWith('community-');
 const AVATARS = ['🏏', '⚽', '🏀', '🏸', '🏃', '🎾', '🚴', '🏆'];
 
 // ---------- shared chat state (one login and one connection for every screen) ----------
@@ -141,7 +142,7 @@ async function leaveActive() {
   const r = await new GroupChannel(c.id).leave();
   if (!r.isOk) return fail('Could not leave group', r);
   delete S.convos[S.active]; delete S.msgs[S.active]; delete S.loaded[S.active]; save(); S.active = null;
-  say('You left the group.');
+  say(isCommunity(c) ? `You left ${c.name}.` : 'You left the group.');
 }
 
 async function send(text) {
@@ -222,8 +223,12 @@ const CHATS_HTML = `<div class="nx">
 
 function renderList(box) {
   box.innerHTML = '';
-  const keys = Object.keys(S.convos).filter((k) => !S.convos[k].id.startsWith('community-'));
-  const sections = [['Squad groups', (k) => S.convos[k].type === 'g'], ['Direct messages', (k) => S.convos[k].type === 'd']];
+  const keys = Object.keys(S.convos);
+  const sections = [
+    ['Communities', (k) => isCommunity(S.convos[k])],
+    ['Squad groups', (k) => S.convos[k].type === 'g' && !isCommunity(S.convos[k])],
+    ['Direct messages', (k) => S.convos[k].type === 'd'],
+  ];
   let any = false;
   sections.forEach(([label, f]) => {
     const ks = keys.filter(f); if (!ks.length) return; any = true;
@@ -234,7 +239,7 @@ function renderList(box) {
       b.onclick = () => openConv(k); box.appendChild(b);
     });
   });
-  if (!any) box.appendChild(el$('p', 'nx-muted', 'No chats yet. Create a squad group or start a direct message below.'));
+  if (!any) box.appendChild(el$('p', 'nx-muted', 'No chats yet. Join a community from the Communities tab, create a squad group, or start a direct message below.'));
 }
 
 function renderLog(log, c, list) {
@@ -319,8 +324,10 @@ function mountChats(host) {
     }
     renderList(ui.list);
     const c = S.convos[S.active], list = S.msgs[S.active] || [];
-    ui.title.textContent = c ? (c.type === 'g' ? '# ' : 'Chat with ') + c.name : 'Pick a chat';
+    ui.title.textContent = c ? (c.type === 'd' ? 'Chat with ' : c.emoji ? c.emoji + ' ' : '# ') + c.name : 'Pick a chat';
     ui.actions.hidden = !(c && c.type === 'g');
+    ui.copygid.hidden = isCommunity(c);
+    ui.leave.textContent = isCommunity(c) ? 'Leave community' : 'Leave';
     ui.text.disabled = ui.send.disabled = !c;
     renderLog(ui.log, c, list);
     if (S.active !== lastKey || list.length !== lastCount) ui.log.scrollTop = ui.log.scrollHeight;
